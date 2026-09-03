@@ -1,0 +1,22 @@
+[Unit]
+Description=AD self-service password reset
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APP_DIR__
+ExecStart=__NODE__ src/server.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=__APP_DIR__/data
+
+[Install]
+WantedBy=multi-user.target

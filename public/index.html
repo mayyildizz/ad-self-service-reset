@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="theme-color" content="#0f172a" />
+<title>Reset your Windows password</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --accent:#22d3ee; --muted:#94a3b8; --text:#f1f5f9;
+          --grad:linear-gradient(135deg,#22d3ee 0%,#38bdf8 48%,#818cf8 100%); --line:rgba(255,255,255,.09); }
+  * { box-sizing:border-box; }
+  html,body { margin:0; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; min-height:100vh; }
+  .wrap { max-width:520px; margin:0 auto; padding:28px 16px 48px; }
+  h1 { font-size:22px; margin:0 0 6px; }
+  .intro { color:var(--muted); font-size:14px; line-height:1.6; margin:0 0 14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:18px; margin:12px 0; }
+  .card h2 { margin:0 0 6px; font-size:15px; }
+  .sub { color:var(--muted); font-size:13px; line-height:1.55; }
+  label { display:block; font-size:12px; letter-spacing:.8px; text-transform:uppercase; color:var(--muted); margin:14px 0 6px; font-weight:700; }
+  input { width:100%; min-height:48px; border-radius:12px; border:1px solid var(--line); background:rgba(255,255,255,.05);
+          color:var(--text); font-size:16px; padding:0 14px; font-family:inherit; }
+  input.code { font-size:26px; font-weight:700; letter-spacing:9px; text-align:center; }
+  input:focus { outline:none; border-color:var(--accent); }
+  .btn { display:block; width:100%; min-height:48px; margin-top:14px; border:0; border-radius:14px; font-size:15px; font-weight:700;
+         color:#06121f; background:var(--grad); cursor:pointer; font-family:inherit; }
+  .btn[disabled] { opacity:.45; cursor:default; }
+  .btn.ghost { background:transparent; color:var(--muted); border:1px solid var(--line); font-weight:600; }
+  .flag { margin-top:12px; padding:11px 13px; border-radius:14px; font-size:13px; line-height:1.55;
+          background:rgba(251,191,36,.10); border:1px solid rgba(251,191,36,.28); color:#fcd34d; }
+  .flag.bad { background:rgba(239,68,68,.10); border-color:rgba(239,68,68,.30); color:#fca5a5; }
+  .flag.good { background:rgba(34,197,94,.10); border-color:rgba(34,197,94,.30); color:#86efac; }
+  .reveal { margin-top:13px; padding:15px; border-radius:14px; background:rgba(34,197,94,.09); border:1px solid rgba(34,197,94,.30); }
+  .reveal .lbl { font-size:11px; letter-spacing:1.1px; text-transform:uppercase; color:#86efac; }
+  .pw { display:flex; align-items:center; gap:10px; margin-top:9px; }
+  .pw code { flex:1; font-size:22px; font-weight:700; letter-spacing:1.5px; overflow-wrap:anywhere;
+             font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:#eafff2; }
+  .copy { min-height:40px; padding:0 14px; border-radius:10px; border:1px solid rgba(34,197,94,.35);
+          background:rgba(34,197,94,.14); color:#bbf7d0; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; }
+  .foot { color:var(--muted); font-size:12px; text-align:center; margin-top:22px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 id="title">Reset your Windows password</h1>
+  <p class="intro">Enter your Windows username. We will e-mail a confirmation code to the recovery address on file, then give you a new password.</p>
+
+  <div class="card" id="step1">
+    <h2>1 · Who are you?</h2>
+    <label for="u">Windows username</label>
+    <input id="u" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="e.g. jsmith or jsmith@example.com" />
+    <button class="btn" id="send">Send me a code</button>
+    <div class="flag bad" id="err1" hidden></div>
+  </div>
+
+  <div class="card" id="step2" hidden>
+    <h2>2 · Enter the code</h2>
+    <div class="sub" id="hint"></div>
+    <label for="c">6-digit code</label>
+    <input id="c" class="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" />
+    <button class="btn" id="confirm">Confirm and reset</button>
+    <button class="btn ghost" id="again">Start over</button>
+    <div class="flag bad" id="err2" hidden></div>
+  </div>
+
+  <div class="card" id="step3" hidden>
+    <h2>3 · Your new password</h2>
+    <div class="sub" id="who"></div>
+    <div class="reveal">
+      <div class="lbl">New password</div>
+      <div class="pw"><code id="pw"></code><button class="copy" id="copy">Copy</button></div>
+    </div>
+    <div class="flag" id="note"></div>
+    <div class="flag good">Sign in with this password now. Change it afterwards from Windows (Ctrl+Alt+Del → Change a password).</div>
+  </div>
+
+  <div class="foot" id="foot"></div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+let challenge = null, username = '';
+let CFG = { it_contact: 'IT', otp_ttl_min: 10, dry_run: false };
+
+fetch('/api/config').then(r => r.json()).then(c => {
+  CFG = c;
+  $('title').textContent = `${c.org}: reset your Windows password`;
+  $('foot').textContent = `Problems? Contact ${c.it_contact}.` + (c.dry_run ? ' (TEST MODE: passwords are not really changed)' : '');
+}).catch(() => {});
+
+async function post(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.message || 'Something went wrong.');
+  return j;
+}
+
+$('send').onclick = async () => {
+  username = $('u').value.trim();
+  $('err1').hidden = true;
+  if (!username) { $('err1').textContent = 'Enter your username.'; $('err1').hidden = false; return; }
+  $('send').disabled = true;
+  try {
+    const j = await post('/api/challenge', { username });
+    challenge = j.challenge_id || null;
+    $('hint').textContent = j.email_hint
+      ? `We sent a code to ${j.email_hint}. It expires in ${j.expires_in_min} minutes.`
+      : `${j.message} Check your inbox and spam folder. If nothing arrives, contact ${CFG.it_contact}.`;
+    $('step1').hidden = true; $('step2').hidden = false; $('c').focus();
+  } catch (e) { $('err1').textContent = e.message; $('err1').hidden = false; }
+  finally { $('send').disabled = false; }
+};
+
+$('confirm').onclick = async () => {
+  $('err2').hidden = true;
+  const code = $('c').value.trim();
+  if (!/^\d{6}$/.test(code)) { $('err2').textContent = 'Enter the 6-digit code.'; $('err2').hidden = false; return; }
+  $('confirm').disabled = true;
+  try {
+    const j = await post('/api/reset', { username, challenge_id: challenge || '', code });
+    $('who').textContent = `Account: ${j.account}` + (j.display_name ? ` (${j.display_name})` : '');
+    $('pw').textContent = j.password;
+    const notes = [];
+    if (j.dry_run) notes.push('TEST MODE: the password was NOT actually changed.');
+    if (j.unlocked === false) notes.push('Your account may still be locked for a few minutes. Wait, then try again.');
+    if (j.must_change) notes.push('Windows will ask you to choose a new password at your next sign-in.');
+    $('note').textContent = notes.join(' '); $('note').hidden = notes.length === 0;
+    $('step2').hidden = true; $('step3').hidden = false;
+  } catch (e) { $('err2').textContent = e.message; $('err2').hidden = false; }
+  finally { $('confirm').disabled = false; }
+};
+
+$('again').onclick = () => { challenge = null; $('c').value = ''; $('step2').hidden = true; $('step1').hidden = false; };
+$('copy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('pw').textContent); $('copy').textContent = 'Copied'; }
+  catch { $('copy').textContent = 'Select & copy'; }
+};
+</script>
+</body>
+</html>
