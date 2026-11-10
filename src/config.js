@@ -15,7 +15,11 @@ const cfg = {
   host: env.HOST || '127.0.0.1',
   port: num(env.PORT, 3800),
   publicUrl: (env.PUBLIC_URL || 'http://localhost:3800').replace(/\/+$/, ''),
-  trustProxy: bool(env.TRUST_PROXY, false),
+  // Only the proxy on this host is believed (deploy/nginx.conf.example): with a plain `true` the
+  // FIRST X-Forwarded-For entry is the client, and that one is the caller's to invent. Not a hop
+  // count: this Fastify answers a number by trusting nobody, so everyone would share one IP limit.
+  // shortcut: a proxy on another machine is not believed, put its address here if that ever happens.
+  trustProxy: bool(env.TRUST_PROXY, false) ? 'loopback' : false,
   orgName: env.ORG_NAME || 'Your organisation',
   itContact: env.IT_CONTACT || 'your IT helpdesk',
 

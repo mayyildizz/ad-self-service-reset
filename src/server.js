@@ -35,6 +35,11 @@ app.addHook('onSend', async (req, reply) => {
 });
 
 const GENERIC = 'If that account exists and has a recovery e-mail on file, a code has been sent.';
+// One answer for every outcome (README: no account-existence oracle). An unknown or refused
+// request gets a decoy challenge: its code is never sent and its dn matches no account, so
+// /api/reset answers it exactly like a real one and can never reset anything.
+const generic = (id) => ({ ok: true, message: GENERIC, challenge_id: id, expires_in_min: cfg.otp.ttlMin });
+const decoy = (sam) => generic(mintChallenge({ sam, dn: null }).id);
 
 app.get('/api/health', async () => {
   const [ad, smtp] = await Promise.all([adHealth(), smtpHealth()]);
@@ -65,33 +70,32 @@ app.post('/api/challenge', async (req, reply) => {
   if (found.status !== 'ok') {
     audit('challenge_refused', { ip, username, reason: found.status, why: found.why, sam: found.user?.sam });
     // Same answer as success: no existence oracle.
-    return { ok: true, message: GENERIC, expires_in_min: cfg.otp.ttlMin };
+    return decoy(found.user?.sam || username);
   }
   const { user } = found;
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(user.recoveryMail)) {
     audit('challenge_refused', { ip, username, sam: user.sam, reason: 'no_recovery_mail', attr: cfg.ad.recoveryMailAttr });
-    return { ok: true, message: GENERIC, expires_in_min: cfg.otp.ttlMin };
+    return decoy(user.sam);
   }
   if (resetsLast24h(user.sam.toLowerCase()) >= cfg.otp.resetsPerDay) {
     audit('challenge_refused', { ip, username, sam: user.sam, reason: 'daily_reset_limit' });
-    return { ok: true, message: GENERIC, expires_in_min: cfg.otp.ttlMin };
+    return decoy(user.sam);
   }
   if (!sendAllowed(user.sam.toLowerCase())) {
     audit('challenge_refused', { ip, username, sam: user.sam, reason: 'send_rate_limit' });
-    return { ok: true, message: GENERIC, expires_in_min: cfg.otp.ttlMin };
+    return decoy(user.sam);
   }
 
   const { id, code } = mintChallenge({ sam: user.sam, dn: user.dn });
   if (cfg.otp.debugLog) req.log.warn({ sam: user.sam, code }, 'OTP_DEBUG_LOG is on: code printed');
-  try {
-    await sendCode({ to: user.recoveryMail, code, account: user.sam, minutes: cfg.otp.ttlMin });
-  } catch (e) {
-    req.log.error({ err: e.message }, 'SMTP send failed');
-    audit('challenge_mail_error', { ip, sam: user.sam, error: e.message });
-    return reply.code(503).send({ error: 'mail_failed', message: 'We could not send the code right now. Try again shortly.' });
-  }
-  audit('challenge_sent', { ip, sam: user.sam, to: maskEmail(user.recoveryMail), challenge: id });
-  return { ok: true, message: GENERIC, challenge_id: id, email_hint: maskEmail(user.recoveryMail), expires_in_min: cfg.otp.ttlMin };
+  // Not awaited: neither a mail failure nor the time the mail takes may show in the answer.
+  sendCode({ to: user.recoveryMail, code, account: user.sam, minutes: cfg.otp.ttlMin }).then(
+    () => audit('challenge_sent', { ip, sam: user.sam, to: maskEmail(user.recoveryMail), challenge: id }),
+    (e) => {
+      req.log.error({ err: e.message }, 'SMTP send failed');
+      audit('challenge_mail_error', { ip, sam: user.sam, error: e.message });
+    });
+  return generic(id);
 });
 
 app.post('/api/reset', async (req, reply) => {
